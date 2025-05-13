@@ -12,15 +12,13 @@ library(readr)
 library(readxl)
 library(dplyr)
 library(ggplot2)
-library(cutpointr)
 library(purrr)
 library(reshape2)
 library(phyloseq)
-library(palettes)
-library(umap)
 library(vegan)
 library(openxlsx)
 library(patchwork)
+library(ggpubr)
 
 # Reading the metadata
 setwd("~/Downloads/nature2023_data/")
@@ -71,13 +69,21 @@ pcoa_results <- ordinate(all, method = "PCoA", distance = bc_distance)  # Perfor
 # Make Plot
 pcoa_plot <- NULL
 pcoa_plot <- plot_ordination(all, pcoa_results, color = 'location', shape = 'species') +
-  geom_point(size = 3, alpha = 0.6) +
-  theme(panel.background = element_rect(fill = "white", color = NA),
-        panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank(),
-        axis.line = element_line(size = 0.5, color = "black"))+
+  geom_point(size = 5, alpha = 0.7) +  
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(size = 0.5, color = "black"),
+    
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    
+    plot.title = element_text(size = 18, hjust = 0.5),
+    legend.position = "none"
+  ) +
   labs(x = "PC1 (22.6%)", y = "PC2 (17.1%)") +
-  ggtitle(paste("PCoA of Kraken2 Species Abundance (BCD)"))  # Create PCoA plot with title
+  ggtitle("PCoA of Kraken2 Species Abundance (BCD)")
 
 # Extract PC1 values and metadata
 pcoa_data <- as.data.frame(pcoa_results$vectors[, 1])  # Extract PC1 values
@@ -85,10 +91,9 @@ colnames(pcoa_data) <- "PC1"
 pcoa_data$species <- sample_data(all)$species  # Add species information
 
 # statistical analysis
-stat_test <- pcoa_data %>%
-  wilcox_test(as.formula("PC1 ~ species")) %>%  # Perform Wilcoxon test for each group
-  add_xy_position(x = "species") %>% filter (xmin == "1") %>%
-  add_significance("p")
+#stat_test <- pcoa_data %>%
+#  wilcox_test(as.formula("PC1 ~ species")) %>%  # Perform Wilcoxon test for each group
+#  add_xy_position(x = "species") %>% filter (xmin == "1")
 
 # Create the box plot for PC1 values by species
 box_plot1 <- ggplot(pcoa_data, aes(x = PC1, y = species, fill = species)) +
@@ -99,8 +104,7 @@ box_plot1 <- ggplot(pcoa_data, aes(x = PC1, y = species, fill = species)) +
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(),
         legend.position = "none",
-        axis.title.y = element_text(size = 12),  
-        axis.text.y = element_text(size = 10),  
+        axis.text.y = element_text(size = 16),
         axis.text.x = element_blank(), 
         plot.margin = margin(t = 5, r = 10, b = 10, l = 10)) +
   labs(x = NULL, y = NULL)
@@ -109,7 +113,7 @@ box_plot1 <- ggplot(pcoa_data, aes(x = PC1, y = species, fill = species)) +
 combined_plot <- pcoa_plot / box_plot1 + plot_layout(heights = c(7, 2))
 combined_plot
 
-ggsave("./1A.png", combined_plot, width = 7, height = 6)
+ggsave("./1A.png", combined_plot, width = 6, height = 6)
 
 # Extract PC2 values and metadata
 pcoa_data <- as.data.frame(pcoa_results$vectors[, 2]) 
@@ -119,10 +123,10 @@ pcoa_data$location <-
   factor(pcoa_data$location, levels = c("oral", "esophagus", "stomach", "small intestine", "large intestine", "stool"))
 
 # statistical analysis
-stat_test <- pcoa_data %>%
-  wilcox_test(as.formula("PC2 ~ location")) %>%  # Perform Wilcoxon test for each group
-  add_xy_position(x = "location") %>% 
-  add_significance("p")
+#stat_test <- pcoa_data %>%
+#  wilcox_test(as.formula("PC2 ~ location")) %>%  # Perform Wilcoxon test for each group
+#  add_xy_position(x = "location") %>% 
+#  add_significance("p")
 
 # Create the box plot for PC2 values by body sites
 box_plot2 <- ggplot(pcoa_data, aes(x = location, y = PC2, fill = location)) +
@@ -133,8 +137,7 @@ box_plot2 <- ggplot(pcoa_data, aes(x = location, y = PC2, fill = location)) +
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(),
         legend.position = "none",
-        axis.title.x = element_text(size = 12),  
-        axis.text.x = element_text(size = 8, angle = 90),  
+        axis.text.x = element_text(size = 10, angle = 90),  
         axis.text.y = element_blank(), 
         plot.margin = margin(t = 5, r = 10, b = 10, l = 10)) +
   labs(x = NULL, y = NULL)
@@ -143,23 +146,23 @@ ggsave("./1AS.png", box_plot2, width = 2, height = 4)
 
 
 # umap
-umap_result <- umap(as.matrix(bc_distance))
-umap_result <- as.data.frame(umap_result$layout)
-colnames(umap_result) <- c("UMAP1", "UMAP2")
+#umap_result <- umap(as.matrix(bc_distance))
+#umap_result <- as.data.frame(umap_result$layout)
+#colnames(umap_result) <- c("UMAP1", "UMAP2")
 
 # Add metadata information
-metadata <- all@sam_data
-umap_result$group <- metadata$species
-umap_result$group2 <- metadata$location
-umap_result$group3 <- metadata$age
+#metadata <- all@sam_data
+#umap_result$group <- metadata$species
+#umap_result$group2 <- metadata$location
+#umap_result$group3 <- metadata$age
 
 # Plot umap
-umap_plot <- ggplot(umap_result) +
-  geom_point(aes(x = UMAP1, y = UMAP2, color = group2, shape = group),
-             size = 3, alpha = 0.8) +
-  scale_shape_manual(values = c(1, 2)) +
-  xlab("UMAP1") + ylab("UMAP2") +
-  ggtitle("UMAP (BCD)") +
-  theme_minimal()
-umap_plot
+#umap_plot <- ggplot(umap_result) +
+#  geom_point(aes(x = UMAP1, y = UMAP2, color = group2, shape = group),
+#             size = 3, alpha = 0.8) +
+#  scale_shape_manual(values = c(1, 2)) +
+#  xlab("UMAP1") + ylab("UMAP2") +
+#  ggtitle("UMAP (BCD)") +
+#  theme_minimal()
+#umap_plot
 
