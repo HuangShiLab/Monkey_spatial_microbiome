@@ -8,144 +8,20 @@
 #######################################
 
 # loading packages
-library(readr)
 library(readxl)
+library(readr)
 library(dplyr)
+library(tidyr)
 library(ggplot2)
-library(cutpointr)
 library(purrr)
 library(reshape2)
-library(palettes)
-library(umap)
 library(vegan)
 library(openxlsx)
 library(tibble)
 library(ggpubr)
 library(patchwork)
-library(readxl)
-
-# Reading the metadata
-setwd("~/Downloads/nature2023_data/")
-
-# Read feature table
-pathway_human <- as.data.frame(read_excel("pathway_abundance_copri.xlsx"))
-rownames(pathway_human) <- pathway_human[[1]]
-pathway_human <- pathway_human[, -1]
-pathway_human[] <- lapply(pathway_human, function(x) as.numeric(as.character(x)))
-pathway_human <- pathway_human %>% rownames_to_column("name")
-
-setwd("~/Downloads/monkey_data")
-pathway_monkey <- read.table("copri_pathway_abundance.tsv", 
-                             sep = '\t', row.names = 1,header = TRUE)
-pathway_monkey[] <- lapply(pathway_monkey, function(x) as.numeric(as.character(x)))
-pathway_monkey <- pathway_monkey %>% rownames_to_column("name")
-
-# Combine two feature tables
-pathway <- full_join(pathway_human, pathway_monkey, by = "name")
-pathway <- as.data.frame(pathway)
-pathway[is.na(pathway)] <- 0
-
-rownames(pathway) <- pathway$name
-pathway <- pathway[,-1]
-pathway[] <- lapply(pathway, function(x) as.numeric(as.character(x)))
-pathway <- t(pathway)
-
-# Meta input
-setwd("~/Downloads/comparison_data")
-metadata <- as.data.frame(read_excel("meta.xlsx"))
-rownames(metadata) <- metadata[[1]]
-metadata[[1]] <- NULL
-
-pathway <- pathway[order(match(rownames(pathway), rownames(metadata))), ]
-pathway <- t(pathway)
-pathway <- pathway[-1, ] # delete the first row
-pathway <- as.matrix(pathway)
-
-new_labels <- metadata$location
-last_label <- ""
-for (i in seq_along(new_labels)) {
-  if (new_labels[i] == last_label) {
-    new_labels[i] <- ""  # Blank out duplicates
-  } else {
-    last_label <- new_labels[i]
-  }
-}
-
-
-
-# Plot heatmap with clustering
-p <- pheatmap(
-  log10(ifelse(pathway == 0, 0.01, pathway)),  # Log-transformed abundance
-  color = viridis(100),
-  cluster_rows = TRUE,  # Enable row clustering
-  cluster_cols = FALSE, # Disable column clustering
-  scale = "none",       # Do not scale rows/columns
-  main = "Pathway Abundance Heatmap",
-  show_rownames = FALSE,
-  labels_col = new_labels,
-  angle_col = 90,
-  fontsize_col = 8,
-  border_color = NA
-)
-
-# copri pathway comparison
-pathway_filtered <- pathway[, apply(pathway, 2, median) > 0]
-pathway_filtered <- pathway_filtered[, !(names(pathway_filtered) == "O1_K_1")]
-pathway_filtered <- sweep(pathway_filtered, 2, colSums(pathway_filtered), FUN = "/")
-
-# Create a new row based on column names
-new_row <- ifelse(startsWith(colnames(pathway_filtered), "SRR"), "human", "monkey")
-
-# Add the new row to the dataframe
-pathway_filtered <- as.data.frame(rbind(new_row, pathway_filtered))
-
-# Initialize a results list
-results <- data.frame(Feature = character(), p.value = numeric(), stringsAsFactors = FALSE)
-# Loop through each feature (excluding SampleID and Group)
-feature_cols <- setdiff(rownames(pathway_filtered), c("new_row"))
-for (feature in feature_cols) {
-  kruskal_test <- kruskal.test(as.numeric(pathway_filtered[feature, ]) ~ 
-                                 as.factor(as.character(pathway_filtered[1, ])))
-  results <- rbind(results, data.frame(Feature = feature, p.value = kruskal_test$p.value))
-}
-# Adjust p-values using the Benjamini-Hochberg method
-results$adj.p.value <- p.adjust(results$p.value, method = "BH")
-results <- results[!is.na(results$adj.p.value), ]
-
-# Filter significant features
-significant_features <- results[results$adj.p.value < 0.05, ]
-
-# Add enrichment column
-enrich <- sapply(significant_features$Feature, function(feature) {
-  group_labels <- as.factor(as.character(pathway_filtered["1", ]))
-  values <- as.numeric(pathway_filtered[feature, ])
-  group_medians <- tapply(values, group_labels, median)
-  names(which.max(group_medians))  # return the group with highest median
-})
-
-# Add to the results
-significant_features$enrich <- enrich
-significant_data <- pathway_filtered[significant_features$Feature, ]
-significant_data_clean <- as.data.frame(
-  lapply(significant_data, function(x) as.numeric(as.character(x))))
-rownames(significant_data_clean) <- rownames(significant_data)
-
-# Now convert to matrix for pheatmap
-significant_data_clean <- as.matrix(significant_data_clean)
-
-p <- pheatmap(
-  significant_data_clean,
-  color = viridis(100),
-  cluster_rows = TRUE,  # Enable row clustering
-  cluster_cols = FALSE, # Disable column clustering
-  scale = "none",       # Do not scale rows/columns
-  main = "Species Abundance Heatmap",
-  show_rownames = TRUE,
-  show_colnames = TRUE,
-  angle_col = 90,
-  fontsize_col = 8,
-  border_color = NA
-)
+library(clusterProfiler)
+library(stringr)
 
 ## gene
 # Reading the metadata
@@ -181,23 +57,35 @@ new_row <- ifelse(startsWith(colnames(gene_filtered), "SRR"), "human", "monkey")
 # Add the new row to the dataframe
 gene_filtered <- rbind(new_row, gene_filtered)
 
-# Initialize a results list
+# Initialize a results data frame
 results <- data.frame(Feature = character(), p.value = numeric(), stringsAsFactors = FALSE)
-# Loop through each feature (excluding SampleID and Group)
-feature_cols <- setdiff(rownames(gene_filtered), c("1"))
+
+# Loop through each feature (excluding SampleID / group row)
+feature_cols <- setdiff(rownames(gene_filtered), "1")
 for (feature in feature_cols) {
-  kruskal_test <- kruskal.test(as.numeric(gene_filtered[feature, ]) ~ as.factor(as.character(gene_filtered[1, ])))
+  kruskal_test <- kruskal.test(as.numeric(gene_filtered[feature, ]) ~ as.factor(as.character(gene_filtered["1", ])))
   results <- rbind(results, data.frame(Feature = feature, p.value = kruskal_test$p.value))
 }
-# Adjust p-values using the Benjamini-Hochberg method
+
+# Adjust p-values using BH method
 results$adj.p.value <- p.adjust(results$p.value, method = "BH")
-results <- results[!is.na(results$adj.p.value), ]
+
+# Compute fold change for all features
+fold_changes <- sapply(results$Feature, function(feature) {
+  group_labels <- as.factor(as.character(gene_filtered["1", ]))
+  values <- as.numeric(gene_filtered[feature, ])
+  group_medians <- tapply(values, group_labels, median)
+  max(group_medians) / max(min(group_medians), 1e-6)  # safe division
+})
+
+# Add to results
+results$fold_change <- fold_changes
 
 # Filter significant features
-significant_features <- results[results$adj.p.value < 0.01, ]
+differential_features <- results[results$fold_change > 2, ]
 
 # Add enrichment column
-enrich <- sapply(significant_features$Feature, function(feature) {
+enrich <- sapply(differential_features$Feature, function(feature) {
   group_labels <- as.factor(as.character(gene_filtered["1", ]))
   values <- as.numeric(gene_filtered[feature, ])
   group_medians <- tapply(values, group_labels, median)
@@ -205,36 +93,63 @@ enrich <- sapply(significant_features$Feature, function(feature) {
 })
 
 # Add to the results
-significant_features$enrich <- enrich
-write.xlsx(significant_features, "enriched_genes.xlsx")
+differential_features$enrich <- enrich
+write.xlsx(differential_features, "enriched_genes.xlsx")
 
-# calculate non zero prevalance in each group
-# Prepare group assignment
-group1 <- colnames(gene_filtered)[new_row == "human"]
-group2 <- colnames(gene_filtered)[new_row == "monkey"]
+# import GO data
+universe_genes <- unique(rownames(gene_filtered))
+writeLines(universe_genes, "allgenes.txt")
+# copy all genes to UniPort website to get GO information
+setwd("~/Downloads/")
+GO_all <- read_tsv("all_GOs.tsv", quote = "")
 
-# Initialize data frame to store prevalence
-feature_rows <- setdiff(rownames(gene_filtered), "1")
+# Use ClusterProfiler for GO enrichment analysis
+gene2go <- GO_all %>%
+  dplyr::select(GOID = `Gene Ontology (GO)`, GeneID = Feature) %>%
+  filter(!is.na(GOID) & GOID != "") %>%
+  separate_rows(GOID, sep = ";") %>%   # split rows
+  mutate(GOID = trimws(GOID))
 
-prevalence_df <- data.frame(
-  Feature = feature_rows,
-  human_nonzero = NA_real_,
-  monkey_nonzero = NA_real_,
-  stringsAsFactors = FALSE
-)
+# Create list of significant genes
+sig_genes <- differential_features %>%
+  filter(enrich == "monkey") %>%
+  pull(Feature) %>%
+  unique()
 
-# Calculate non-zero prevalence
-for (i in seq_along(feature_rows)) {
-  feature <- feature_rows[i]
-  values_human <- as.numeric(gene_filtered[feature, group1])
-  values_monkey <- as.numeric(gene_filtered[feature, group2])
-  
-  prevalence_df$human_nonzero[i]  <- mean(values_human != 0)
-  prevalence_df$monkey_nonzero[i] <- mean(values_monkey != 0)
-}
+# Perform enrichment
+ego <- enricher(sig_genes,
+                TERM2GENE = gene2go,
+                pvalueCutoff = 0.1,
+                qvalueCutoff = 0.5,
+                minGSSize = 2)
 
-filtered <- prevalence_df[
-  (prevalence_df$human_nonzero >= 0.8 & prevalence_df$monkey_nonzero <= 0.2) |
-    (prevalence_df$monkey_nonzero >= 0.8 & prevalence_df$human_nonzero <= 0.2),
-]
+ego@result <- ego@result[ego@result$pvalue < 0.1, ]
+ego@result$GeneRatio <- sapply(ego@result$GeneRatio, function(x) eval(parse(text = x))) 
+ego@result$Description_wrapped <- str_wrap(ego@result$Description, width = 40)
 
+dotplot <- ggplot(ego@result, aes(
+  x = FoldEnrichment,
+  y = reorder(Description_wrapped, FoldEnrichment),
+  size = Count,
+  color = pvalue
+)) +
+  geom_point() +
+  scale_color_continuous(low = "red", high = "blue") +
+  scale_size(range = c(3, 10)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA), 
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    axis.text.y = element_text(size = 12),   # Y-axis text size
+    axis.text.x = element_text(size = 10),   # X-axis text size (optional)
+    plot.title = element_text(size = 14, face = "bold")  # Title size
+  ) +
+  labs(
+    title = "Monkey S. copri GO Enrichment",
+    x = "Gene Ratio",
+    y = "GO Term"
+  )
+ggsave("./1D.png", dotplot, width = 8, height = 4)
