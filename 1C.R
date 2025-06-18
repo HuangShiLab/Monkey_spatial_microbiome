@@ -19,6 +19,8 @@ library(ANCOMBC)
 library(ggbeeswarm)
 library(ggpubr)
 library(tibble)
+library(microbiome)
+library(patchwork)
 
 # Set working directory and read metadata
 setwd("~/Downloads/nature2023_data/")
@@ -125,10 +127,10 @@ analyze_phyloseq <- function(phyloseq_obj, group_var = "species") {
     select(-starts_with("detected_0."))
   
   # Return LEfSe and ANCOM results
-  list(
-    lefse = as.data.frame(lefse@marker_table),
+#  list(
+#    lefse = as.data.frame(lefse@marker_table),
     ancom = as.data.frame(res)
-  )
+#  )
 }
 
 # List of Phyloseq objects for different locations
@@ -138,18 +140,18 @@ phyloseq_objects <- list(all = all, LI = LI, SI = SI, stomach = stomach, oral = 
 results <- lapply(phyloseq_objects, analyze_phyloseq)
 
 # Separate results into LEfSe and ANCOM tables
-lefse_results <- list()
+#lefse_results <- list()
 ancom_results <- list()
 
 # Iterate over results and store in lists
 for (location in names(results)) {
-  lefse_table <- as.data.frame(results[[location]]$lefse)
+#  lefse_table <- as.data.frame(results[[location]]$lefse)
   ancom_table <- as.data.frame(results[[location]]$ancom)
   
-  if (nrow(lefse_table) > 0) {
-    lefse_table$Location <- location
-    lefse_results[[location]] <- lefse_table
-  }
+#  if (nrow(lefse_table) > 0) {
+#    lefse_table$Location <- location
+#    lefse_results[[location]] <- lefse_table
+#  }
   
   if (nrow(ancom_table) > 0) {
     ancom_table$Location <- location
@@ -158,14 +160,14 @@ for (location in names(results)) {
 }
 
 # Combine results into final data frames
-lefse_combined <- do.call(rbind, lefse_results)
+#lefse_combined <- do.call(rbind, lefse_results)
 ancom_combined <- do.call(rbind, ancom_results)
 
 # Write results to an Excel file
-write.xlsx(list(
-  Lefse = lefse_combined,
-  Ancom = ancom_combined
-), "microbiome_results.xlsx")
+#write.xlsx(list(
+#  Lefse = lefse_combined,
+#  Ancom = ancom_combined
+#), "microbiome_results.xlsx")
 
 ## box plot
 # upper
@@ -193,7 +195,7 @@ otu_long <- otu_long %>%
 otu_long <- otu_long %>%
   mutate(
     Abundance = log10(as.numeric(Abundance) + 1),
-    species = as.factor(species),
+    host = as.factor(host),
     Tract = "upper GI tract"
   )
 
@@ -204,7 +206,7 @@ p1 <- ggplot(otu_long, aes(x = host, y = Abundance, fill = host)) +
   scale_fill_manual(values = c("#eacc76", "#a76b3e")) +
   theme_minimal() +
   labs(
-    x = "", y = "log(Relative Abundance + 1)",
+    x = "", y = "log(Relative Abundance + 1)",title = "Upper GI tract",
     color = "Host"
   ) +
   theme(
@@ -213,18 +215,21 @@ p1 <- ggplot(otu_long, aes(x = host, y = Abundance, fill = host)) +
     panel.grid.minor = element_blank(),
     axis.line = element_line(linewidth = 0.5, color = "black"),
     axis.text.x = element_blank(),
-    strip.background = element_rect(fill = "grey90", color = "grey50"),
+    axis.ticks.y = element_line(), 
+    axis.text.y = element_text(angle = 90),
+    strip.background = element_rect(fill = "white", color = NA),
     strip.text = element_text(color = "black", face = "italic"),
-    legend.position = "none"
+    legend.position = "none",
+    strip.placement = "outside"
   ) +
-  facet_grid(Tract ~ Species)
+  facet_wrap(~Species, nrow = 1, strip.position = "left")
 p1
 
 
 # intestine
 intestine_otu <- as.data.frame(intestine@otu_table)
 intestine_meta <- as.data.frame(intestine@sam_data)
-species_names <- "Segatella copri"
+species_names <- c("Segatella copri")
 
 # Convert OTU table from wide to long format
 otu_long <- intestine_otu %>%
@@ -244,7 +249,7 @@ otu_long <- otu_long %>%
 otu_long <- otu_long %>%
   mutate(
     Abundance = log10(as.numeric(Abundance) + 1),
-    species = as.factor(species),
+    host = as.factor(host),
     Tract = "intestine"
   )
 
@@ -255,7 +260,7 @@ p2 <- ggplot(otu_long, aes(x = host, y = Abundance, fill = host)) +
   scale_fill_manual(values = c("#eacc76", "#a76b3e")) +
   theme_minimal() +
   labs(
-    x = "", y = "log(Relative Abundance + 1)",
+    x = "", y = "",title = "Intestines",
     color = "Host"
   ) +
   theme(
@@ -265,10 +270,14 @@ p2 <- ggplot(otu_long, aes(x = host, y = Abundance, fill = host)) +
     axis.line = element_line(linewidth = 0.5, color = "black"),
     axis.text.x = element_blank(),
     axis.title.y = element_blank(),
-    strip.background = element_rect(fill = "grey90", color = "grey50"),
-    strip.text = element_text(color = "black", face = "italic")
+    legend.position = "none",
+    axis.text.y = element_text(angle = 90),
+    axis.ticks.y = element_line(), 
+    strip.background = element_rect(fill = "white", color = NA),
+    strip.text = element_text(color = "black", face = "italic"),
+    strip.placement = "outside"
   ) +
-  facet_grid(Tract ~ Species, scales = "free_y")
+  facet_wrap(~Species, nrow = 1, strip.position = "left")
 p2
 
 species_names <- c("Treponema succinifaciens",
@@ -281,6 +290,7 @@ otu_long <- intestine_otu %>%
   filter(Species %in% species_names) %>%
   pivot_longer(-Species, names_to = "SampleID", values_to = "Abundance")
 
+
 # Add SampleID as a column to metadata
 intestine_meta$SampleID <- rownames(intestine_meta)
 colnames(intestine_meta)[colnames(intestine_meta) == "species"] <- "host"
@@ -293,9 +303,10 @@ otu_long <- otu_long %>%
 otu_long <- otu_long %>%
   mutate(
     Abundance = log10(as.numeric(Abundance) + 1),
-    species = as.factor(species),
+    host = as.factor(host),
     Tract = "intestine"
   )
+otu_long$Species <- factor(otu_long$Species, levels = species_names)
 
 # Plot with facet_wrap
 p3 <- ggplot(otu_long, aes(x = host, y = Abundance, fill = host)) +
@@ -304,7 +315,7 @@ p3 <- ggplot(otu_long, aes(x = host, y = Abundance, fill = host)) +
   scale_fill_manual(values = c("#eacc76", "#a76b3e")) +
   theme_minimal() +
   labs(
-    x = "", y = "log(Relative Abundance + 1)",
+    x = "", y = "",
     color = "Host"
   ) +
   theme(
@@ -313,18 +324,20 @@ p3 <- ggplot(otu_long, aes(x = host, y = Abundance, fill = host)) +
     panel.grid.minor = element_blank(),
     axis.line = element_line(linewidth = 0.5, color = "black"),
     axis.text.x = element_blank(),
-    strip.background = element_rect(fill = "grey90", color = "grey50"),
+    axis.ticks.y = element_line(), 
+    axis.text.y = element_text(angle = 90),
+    strip.background = element_rect(fill = "white", color = NA),
     strip.text = element_text(color = "black", face = "italic"),
-    legend.position = "none"
+    strip.placement = "outside"
   ) +
-  facet_grid(Tract ~ Species, scales = "free_y") + 
+  facet_wrap(~Species, nrow = 1, strip.position = "left")+
   coord_cartesian(ylim = c(0, 0.04))
 p3
 
-combined_plot <- (p1 + p2 + plot_layout(widths = c(2, 1))) / p3
+combined_plot <- p1 + p2 + p3 + plot_layout(widths = c(2,0.9,6))
+combined_plot
 
-
-ggsave("./1C.png", combined_plot, width = 9, height = 4, bg = "white")
+ggsave("./1C.png", combined_plot, width = 10, height = 2.5, bg = "white")
 
 
 

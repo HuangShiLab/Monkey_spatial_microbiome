@@ -1,182 +1,261 @@
 #######################################
 # Monkey project
 #
-# Humann result -- Heatmap
+# Pathway diversity
 #
 # Author: HOU Shuwen
 #######################################
 
-## install and load necessary libraries for data analyses
-#-------------------------------
-p <- c("ggplot2","pheatmap", "vegan", "readr",
-       "ggpubr", "dplyr", "writexl","tidyr","tibble", "viridis")
-usePackage <- function(p) {
-  if (!is.element(p, installed.packages()[,1]))
-    install.packages(p, dep=TRUE, repos="https://cloud.r-project.org/")
-  suppressWarnings(suppressMessages(invisible(require(p, character.only=TRUE))))
-}
-invisible(lapply(p, usePackage))
-#-------------------------------
+# Load required packages
+library(ade4)
+library(ggplot2)
+library(palettes)
+library(ggpubr)
+library(vegan)
+library(umap)
+library(readr)
+library(readxl)
+library(dplyr)
+library(rstatix)
+library(ggpubr)  # loaded again (redundant but harmless)
 
-#function to filter
-filter_features_by_prev <- function(data, prev_threshold = 0.1) {
-  # Filter columns based on the proportion of non-zero entries
-  filtered_data <- data[, which(colSums(data != 0) / nrow(data) > prev_threshold)]
-  return(filtered_data)
-}
+# ---------- Pathway-based Beta Diversity (Bray-Curtis) ----------
 
-filter_features_by_abundance <- function(data, mean_abd_cutoff=0.001){
-  hist(colMeans(data))
-  data<-data[, which(colMeans(data) > mean_abd_cutoff)]
-  data
-}
-
-# Species
-# data input
+# Set working directory
 setwd("~/Downloads/monkey_data")
-bc_kraken <- as.data.frame(read_tsv("species_abundance_bracken.tsv",col_names = T))
-bc_kraken$name <- gsub("'", "", bc_kraken$name)
 
-# tidy up feature table
-rownames(bc_kraken) <- bc_kraken$name
-bc_kraken <- bc_kraken[,-1]
-bc_kraken[] <- lapply(bc_kraken, function(x) as.numeric(as.character(x)))
-# Normalize each column to sum to 1
-bc_kraken <- sweep(bc_kraken, 2, colSums(bc_kraken), FUN = "/")
-bc_kraken <- as.data.frame(t(bc_kraken))
-
-rowSums(bc_kraken, na.rm = TRUE) # check row sums
-
-metadata <- read.table("kraken_metadata.txt",sep="\t",header=TRUE)
-
-
-bc_kraken <- bc_kraken[order(match(rownames(bc_kraken), rownames(metadata))), ]
-# bc_kraken <- filter_features_by_prev(bc_kraken)
-
-# Select significant features
-bc_kraken$group <- metadata$group
-
-# Remove kidney samples
-bc_kraken <- bc_kraken[bc_kraken$group != "kidney", ]
-
-
-# Initialize a results list
-results <- data.frame(Feature = character(), p.value = numeric(), stringsAsFactors = FALSE)
-# Loop through each feature (excluding SampleID and Group)
-feature_cols <- setdiff(names(bc_kraken), c("SampleID", "group"))
-for (feature in feature_cols) {
-  kruskal_test <- kruskal.test(bc_kraken[[feature]] ~ bc_kraken$group)
-  results <- rbind(results, data.frame(Feature = feature, p.value = kruskal_test$p.value))
-}
-# Adjust p-values using the Benjamini-Hochberg method
-results$adj.p.value <- p.adjust(results$p.value, method = "BH")
-results <- results[!is.na(results$adj.p.value), ]
-
-# Filter significant features
-significant_features <- results[results$adj.p.value < 0.01, ]
-significant_data <- bc_kraken %>%
-  select(significant_features$Feature)
-significant_data <- as.matrix(t(significant_data))
-
-# Plot heatmap with clustering
-p <- pheatmap(
-  log10(ifelse(significant_data == 0, 1e-6, significant_data)),  # Log-transformed abundance
-  color = viridis(100),
-  cluster_rows = TRUE,  # Enable row clustering
-  cluster_cols = FALSE, # Disable column clustering
-  scale = "none",       # Do not scale rows/columns
-  main = "Species Abundance Heatmap",
-  show_rownames = FALSE,
-  show_colnames = FALSE,
-  border_color = NA
-)
-ggsave("./plots/S4.png", p, width = 10, height = 7)
-
-# Get the order of rows after clustering
-reordered_rows <- p$tree_row$order
-
-# Get the row names in clustered order
-clustered_row_names <- rownames(significant_data)[reordered_rows]
-# Reorder significant_data using clustered_row_names
-final_export <- significant_data[clustered_row_names, ]
-
-# Convert to data frame for writing to Excel
-final_export_df <- as.data.frame(final_export)
-final_export_df <- tibble::rownames_to_column(final_export_df, var = "Sample")
-
-# Write to Excel
-write_xlsx(final_export_df, path = "./significant_pathways_clustered.xlsx")
-
-
-# Pathway
-# Data input
-setwd("~/Downloads/monkey_data")
+# Load unstratified pathway abundance table
 pathway <- read.table("merged_unstratified_pathway.tsv", 
-                      sep = '\t', row.names = 1,header = TRUE)
+                      sep = '\t', row.names = 1, header = TRUE)
+
+# Convert all values to numeric
 pathway[] <- lapply(pathway, function(x) as.numeric(as.character(x)))
 
-# Normalize each column to sum to 1
+# Normalize each sample (column) to relative abundance
 pathway <- sweep(pathway, 2, colSums(pathway), FUN = "/")
-pathway <- as.data.frame(t(pathway))
-rowSums(pathway, na.rm = TRUE) # check row sums
 
-metadata <- read.table("kraken_metadata.txt",sep="\t",header=TRUE, row.names = 1)
+# Remove one sample (excluded elsewhere)
+pathway <- pathway[, colnames(pathway) != "Y1_SI_113cm"]
 
+# Load metadata
+metadata <- read.table("kraken_metadata.txt", sep = "\t", header = TRUE)
 
-pathway <- pathway[order(match(rownames(pathway), rownames(metadata))), ]
-# pathway <- filter_features_by_prev(pathway)
+# Split into age groups
+pathway_old <- pathway[1:34]
+pathway_young <- pathway[35:69]
 
-# Select significant features
-pathway$group <- metadata$group
+# Calculate Bray-Curtis distances across all samples
+pathway_dist <- vegdist(t(pathway), method = "bray")
 
+# Convert distance matrix to long format
+dist_long <- as.data.frame(as.table(as.matrix(pathway_dist))) %>%
+  mutate(Sample1 = Var1, Sample2 = Var2, Distance = Freq) %>%
+  filter(Sample1 != Sample2)
+
+# Remove duplicated sample pairs
+dist_long <- dist_long %>%
+  mutate(
+    Sample1 = as.character(Sample1),
+    Sample2 = as.character(Sample2),
+    Pair = paste(pmin(Sample1, Sample2), pmax(Sample1, Sample2), sep = "-")
+  ) %>% distinct(Pair, .keep_all = TRUE) %>%
+  select(-Pair)
+
+# Merge metadata
+dist_long <- left_join(dist_long, metadata %>% select(Sample1 = ID, location1 = location))
+dist_long <- left_join(dist_long, metadata %>% select(Sample2 = ID, location2 = location))
+
+# Keep only pairs involving oral samples
+dist_long_oral <- dist_long %>%
+  filter(location1 == "oral" | location2 == "oral")
+
+# Swap columns to ensure Sample1 is oral
+dist_long_oral <- dist_long_oral %>%
+  mutate(
+    TempSample1 = if_else(location2 == "oral", Sample2, Sample1),
+    TempSample2 = if_else(location2 == "oral", Sample1, Sample2),
+    TempLocation1 = if_else(location2 == "oral", location2, location1),
+    TempLocation2 = if_else(location2 == "oral", location1, location2)
+  ) %>%
+  mutate(
+    Sample1 = TempSample1,
+    Sample2 = TempSample2,
+    location1 = TempLocation1,
+    location2 = TempLocation2
+  ) %>%
+  select(-TempSample1, -TempSample2, -TempLocation1, -TempLocation2)
 
 # Remove kidney samples
-pathway <- pathway[pathway$group != "kidney", ]
-pathway <- pathway[rownames(pathway) != "Y1_SI_113cm", ]
+dist_long_oral <- dist_long_oral %>% filter(location2 != "kidney")
 
-# Initialize a results list
-results <- data.frame(Feature = character(), p.value = numeric(), stringsAsFactors = FALSE)
-# Loop through each feature (excluding SampleID and Group)
-feature_cols <- setdiff(names(pathway), c("SampleID", "group"))
-for (feature in feature_cols) {
-  kruskal_test <- kruskal.test(pathway[[feature]] ~ pathway$group)
-  results <- rbind(results, data.frame(Feature = feature, p.value = kruskal_test$p.value))
-}
-# Adjust p-values using the Benjamini-Hochberg method
-results$adj.p.value <- p.adjust(results$p.value, method = "bonferroni")
+# Wilcoxon test comparing oral to other locations
+stat_test <- dist_long_oral %>%
+  wilcox_test(as.formula("Distance ~ location2")) %>%
+  add_xy_position(x = "location2") %>% 
+  filter(xmin == "1") %>%
+  add_significance("p") %>%
+  mutate(location2 = group2)
 
-# Filter significant features
-significant_features <- results[results$adj.p.value < 0.01, ]
-significant_data <- pathway %>%
-  select(significant_features$Feature) %>%
-  select(-group)
-significant_data <- as.matrix(t(significant_data))
+# Set factor levels for plotting
+dist_long_oral$location2 <- factor(dist_long_oral$location2, 
+                                   levels = c("oral", "esophagus", "stomach", 
+                                              "small_intestine", "large_intestine", "stool"))
 
-# Plot heatmap with clustering
-p <- pheatmap(
-  log10(ifelse(significant_data == 0, 1e-6, significant_data)),  # Log-transformed abundance
-  color = viridis(100),
-  cluster_rows = TRUE,  # Enable row clustering
-  cluster_cols = FALSE, # Disable column clustering
-  scale = "none",       # Do not scale rows/columns
-  main = "Pathway Abundance Heatmap",
-  show_rownames = FALSE,
-  show_colnames = FALSE,
-  border_color = NA
-)
-ggsave("./plots/2C.png", p, width = 10, height = 7)
+# Plot: Bray-Curtis distance to oral
+p1 <- ggplot(dist_long_oral, aes(x = location2, y = Distance, fill = location2)) +
+  geom_boxplot(alpha = 0.8) +
+  labs(title = "Distance to oral", x = "location", y = "Bray Curtis Dissimilarity") +
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 16),
+        axis.title = element_text(size = 14),
+        axis.text.x = element_blank(),
+        axis.line = element_line(size = 0.5, color = "black")) +
+  stat_pvalue_manual(stat_test, label = "{p.signif}", tip.length = 0)
 
-# Get the order of rows after clustering
-reordered_rows <- p$tree_row$order
+# ---------- Separate Young and Old Samples ----------
 
-# Get the row names in clustered order
-clustered_row_names <- rownames(significant_data)[reordered_rows]
-# Reorder significant_data using clustered_row_names
-final_export <- significant_data[clustered_row_names, ]
+# Calculate Bray-Curtis distances separately
+pathway_old_dist <- vegdist(t(pathway_old), method = "bray")
+pathway_young_dist <- vegdist(t(pathway_young), method = "bray")
 
-# Convert to data frame for writing to Excel
-final_export_df <- as.data.frame(final_export)
-final_export_df <- tibble::rownames_to_column(final_export_df, var = "Sample")
+# Convert to long format and label by age
+dist_long_old <- as.data.frame(as.table(as.matrix(pathway_old_dist))) %>%
+  mutate(Sample1 = Var1, Sample2 = Var2, Distance = Freq, age = "old") %>%
+  filter(Sample1 != Sample2)
 
-# Write to Excel
-write_xlsx(final_export_df, path = "./significant_pathways_clustered.xlsx")
+dist_long_young <- as.data.frame(as.table(as.matrix(pathway_young_dist))) %>%
+  mutate(Sample1 = Var1, Sample2 = Var2, Distance = Freq, age = "young") %>%
+  filter(Sample1 != Sample2)
+
+# Combine old and young
+dist_long <- rbind(dist_long_old, dist_long_young)
+
+# Remove duplicate pairs
+dist_long <- dist_long %>%
+  mutate(
+    Sample1 = as.character(Sample1),
+    Sample2 = as.character(Sample2),
+    Pair = paste(pmin(Sample1, Sample2), pmax(Sample1, Sample2), sep = "-")
+  ) %>% distinct(Pair, .keep_all = TRUE) %>%
+  select(-Pair)
+
+# Merge with metadata
+dist_long <- left_join(dist_long, metadata %>% select(Sample1 = ID, location1 = location))
+dist_long <- left_join(dist_long, metadata %>% select(Sample2 = ID, location2 = location))
+
+# Filter to oral-related comparisons
+dist_long_oral <- dist_long %>% filter(location1 == "oral" | location2 == "oral")
+
+# Reorganize to have oral in Sample1
+dist_long_oral <- dist_long_oral %>%
+  mutate(
+    TempSample1 = if_else(location2 == "oral", Sample2, Sample1),
+    TempSample2 = if_else(location2 == "oral", Sample1, Sample2),
+    TempLocation1 = if_else(location2 == "oral", location2, location1),
+    TempLocation2 = if_else(location2 == "oral", location1, location2)
+  ) %>%
+  mutate(
+    Sample1 = TempSample1,
+    Sample2 = TempSample2,
+    location1 = TempLocation1,
+    location2 = TempLocation2
+  ) %>%
+  select(-TempSample1, -TempSample2, -TempLocation1, -TempLocation2)
+
+# Remove kidney samples
+dist_long_oral <- dist_long_oral %>% filter(location2 != "kidney")
+
+# Set factors for plotting
+dist_long_oral$location2 <- factor(dist_long_oral$location2,
+                                   levels = c("oral", "esophagus", "stomach", "small_intestine", "large_intestine", "stool"))
+dist_long_oral$age <- factor(dist_long_oral$age, levels = c("young", "old"))
+
+# Wilcoxon test by age group
+stat_test <- dist_long_oral %>%
+  group_by(location2) %>%
+  wilcox_test(as.formula("Distance ~ age")) %>%
+  add_xy_position(x = "location2") %>%
+  add_significance("p")
+
+# Adjust label positions
+stat_test$xmin <- stat_test$xmin + stat_test$x - 1
+stat_test$xmax <- stat_test$xmax + stat_test$x
+
+# Plot: Distance to oral, by age group
+p2 <- ggplot(dist_long_oral, aes(x = interaction(age, location2), y = Distance, fill = location2)) +
+  geom_boxplot() +
+  labs(title = "Distance to oral (split by age group)",
+       x = "location x age", y = "Bray Curtis Dissimilarity") +
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 16),
+        axis.title = element_text(size = 14),
+        axis.text.x = element_text(angle = 0, hjust = 0.5),
+        axis.line = element_line(size = 0.5, color = "black")) +
+  scale_x_discrete(labels = rep(levels(dist_long_oral$age), length(levels(dist_long_oral$location2)))) +
+  stat_pvalue_manual(stat_test, label = "{p.signif}")
+
+# ---------- Alpha Diversity Analysis ----------
+
+# Re-import pathway data for alpha diversity
+setwd("~/Downloads/monkey_data")
+pathway <- read.table("merged_unstratified_pathway.tsv", sep = '\t', row.names = 1, header = TRUE)
+pathway[] <- lapply(pathway, function(x) as.numeric(as.character(x)))
+pathway <- sweep(pathway, 2, colSums(pathway), FUN = "/")
+
+# Load and filter metadata
+metadata <- read.table("kraken_metadata.txt", sep = "\t", header = TRUE, row.names = 1)
+metadata <- metadata[rownames(metadata) != "Y1_SI_113cm", ]
+
+# Construct phyloseq object
+OTU <- otu_table(pathway, taxa_are_rows = TRUE)
+META <- sample_data(metadata)
+pathway <- phyloseq(OTU, META)
+
+# Filter kidney samples
+pathway <- subset_samples(pathway, location != "kidney")
+
+# Estimate alpha diversity (Shannon index)
+measures <- "Shannon"
+alpha_diversity <- estimate_richness(pathway, measures = measures)
+
+# Merge with sample data
+df <- merge(alpha_diversity, pathway@sam_data, by = "row.names")
+names(df)[1] <- "Sample"
+df$location <- factor(df$location, levels = c("oral", "esophagus", "stomach", 
+                                              "small_intestine", "large_intestine", "stool"))
+
+# Wilcoxon test: diversity ~ location
+stat_test <- df %>%
+  wilcox_test(as.formula(paste(measures, "~ location"))) %>%
+  adjust_pvalue(method = "bonferroni") %>%
+  add_significance()
+
+# Plot: Alpha diversity by location
+p3 <- ggplot(df, aes_string(x = "location", y = measures, fill = "location")) +
+  geom_boxplot(alpha = 0.8) +
+  labs(y = paste(measures, "Index"), x = "location", title = "Pathway Diversity") +
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 16),
+        axis.title = element_text(size = 14),
+        axis.text.x = element_blank(),
+        axis.line = element_line(size = 0.5, color = "black")) +
+  scale_x_discrete(labels = function(x) sapply(strsplit(x, "\\."), `[`, 1))
+
+# ---------- Combine All Plots ----------
+
+# Arrange all plots side-by-side
+distance_plot <- ggarrange(p3, p1, p2, ncol = 3, nrow = 1,
+                           widths = c(2, 2, 3),
+                           common.legend = TRUE, legend = "right")
+
+# Display combined plot
+distance_plot
+
+# Save figure
+ggsave("./plots/2A.png", distance_plot, width = 12, height = 4.5, bg = "white")

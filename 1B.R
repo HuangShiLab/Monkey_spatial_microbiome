@@ -69,17 +69,28 @@ META <- sample_data(metadata)
 all <- phyloseq(OTU, META)
 all <- subset_samples(all, location != "kidney")
 
+sample_data(all)$location <- factor(sample_data(all)$location, 
+                                    levels = c("oral", "esophagus", "stomach", "small intestine", "large intestine"))
+
 bc_distance <- phyloseq::distance(all, method = "bray")
 pcoa_results <- ordinate(all, method = "PCoA", distance = bc_distance)  # Perform PCoA
 
 # Make Plot
 pcoa_plot <- NULL
 pcoa_plot <- plot_ordination(all, pcoa_results, color = 'location', shape = 'species') +
-  geom_point(size = 3, alpha = 0.6) +
-  theme(panel.background = element_rect(fill = "white", color = NA),
-        panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank(),
-        axis.line = element_line(size = 0.5, color = "black")) +
+  geom_point(size = 5, alpha = 0.7) +
+  scale_color_viridis_d(option = "plasma", begin = 0, end = 1, direction = 1) +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(size = 0.5, color = "black"),
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    plot.title = element_text(size = 18, hjust = 0.5),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 14)
+  ) +
   labs(x = "PC1 (35.5%)", y = "PC2 (18.5%)") +
   ggtitle(paste("PCoA of HUMAnN Pathway Abundance (BCD)"))  # Create PCoA plot with title
 pcoa_plot
@@ -90,9 +101,9 @@ colnames(pcoa_data) <- "PC1"
 pcoa_data$species <- sample_data(all)$species  # Add species information
 
 # statistical analysis
-stat_test <- pcoa_data %>%
-  wilcox_test(as.formula("PC1 ~ species")) %>%  # Perform Wilcoxon test for each group
-  add_xy_position(x = "species") %>% filter (xmin == "1")
+#stat_test <- pcoa_data %>%
+#  wilcox_test(as.formula("PC1 ~ species")) %>%  # Perform Wilcoxon test for each group
+#  add_xy_position(x = "species") %>% filter (xmin == "1")
 #  add_significance("p")
 
 # Create the box plot for PC1 values by species
@@ -104,17 +115,16 @@ box_plot1 <- ggplot(pcoa_data, aes(x = PC1, y = species, fill = species)) +
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(),
         legend.position = "none",
-        axis.title.y = element_text(size = 12),  
-        axis.text.y = element_text(size = 10),  
+        axis.text.y = element_text(size = 16),
         axis.text.x = element_blank(), 
         plot.margin = margin(t = 5, r = 10, b = 10, l = 10)) +
   labs(x = NULL, y = NULL)
 
 # Combine PCoA plot and box plot using patchwork
-combined_plot <- pcoa_plot / box_plot1 + plot_layout(heights = c(7, 2))
+combined_plot <- pcoa_plot / box_plot1 + plot_layout(heights = c(4, 1))
 combined_plot
 
-ggsave("./1B.png", combined_plot, width = 7, height = 6)
+ggsave("./1B.png", combined_plot, width = 7.5, height = 6)
 
 # Extract PC2 values and metadata
 pcoa_data <- as.data.frame(pcoa_results$vectors[, 2]) 

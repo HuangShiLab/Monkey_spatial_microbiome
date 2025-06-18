@@ -1,35 +1,18 @@
 #######################################
-# Monkey project
+# Monkey Study
 #
-# Mucosal & Luminal -- Heatmap
+# 5 most common phylum, stacked bar plot, mocosal and content
 #
 # Author: HOU Shuwen
 #######################################
 
-## install and load necessary libraries for data analyses
-#-------------------------------
-p <- c("ggplot2","pheatmap", "vegan",  
-       "ggpubr", "dplyr", "writexl","tidyr","tibble", "viridis")
-usePackage <- function(p) {
-  if (!is.element(p, installed.packages()[,1]))
-    install.packages(p, dep=TRUE, repos="https://cloud.r-project.org/")
-  suppressWarnings(suppressMessages(invisible(require(p, character.only=TRUE))))
-}
-invisible(lapply(p, usePackage))
-#-------------------------------
-
-#function to filter
-filter_features_by_prev <- function(data, prev_threshold = 0.1) {
-  # Filter columns based on the proportion of non-zero entries
-  filtered_data <- data[, which(colSums(data != 0) / nrow(data) > prev_threshold)]
-  return(filtered_data)
-}
-
-filter_features_by_abundance <- function(data, max_abd_cutoff=0.001){
-  hist(apply(data, 1, max))
-  data<-data[apply(data, 1, max) > max_abd_cutoff,]
-  return(data)
-}
+# Load required packages
+library(readr)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(openxlsx)
+library(tidyr)
 
 #--------------------------------------#
 # Data Import (Mucosa)
@@ -39,7 +22,21 @@ filter_features_by_abundance <- function(data, max_abd_cutoff=0.001){
 setwd("~/Downloads/monkey_mucosa")
 
 # Read genus abundance data and metadata
-mucosa_species <- as.data.frame(read.table("species_abundance.txt", header = TRUE))
+mucosa_genus <- as.data.frame(read.table("genus_abundance.txt", header = TRUE))
+metadata <- read.table("meta.txt", sep="\t", header=TRUE)
+ID <- metadata$ID  # Extract sample IDs
+
+# Aggregate data by Phylum
+mucosa_genus <- mucosa_genus %>%
+  group_by(Phylum) %>%
+  summarise(across(where(is.numeric), sum, na.rm = TRUE)) %>%
+  as.data.frame()
+
+# Format data: set row names and convert to numeric
+rownames(mucosa_genus) <- mucosa_genus$Phylum
+mucosa_genus <- mucosa_genus[, -1]
+mucosa_genus[] <- lapply(mucosa_genus, function(x) as.numeric(as.character(x)))
+mucosa_genus <- mucosa_genus[, ID, drop = FALSE]  # Keep only relevant columns
 
 #--------------------------------------#
 # Data Import (Content)
@@ -49,98 +46,175 @@ mucosa_species <- as.data.frame(read.table("species_abundance.txt", header = TRU
 setwd("~/Downloads/monkey_data")
 
 # Read genus abundance data and metadata
-content_species <- as.data.frame(read.table("2b_species_abundance.txt", header = TRUE))
+content_genus <- as.data.frame(read.table("2b_genus_abundance.txt", header = TRUE))
+metadata <- read.table("kraken_metadata.txt", sep="\t", header=TRUE)
+ID <- metadata$ID  # Extract sample IDs
 
+# Aggregate data by Phylum
+content_genus <- content_genus %>%
+  group_by(Phylum) %>%
+  summarise(across(where(is.numeric), sum, na.rm = TRUE)) %>%
+  as.data.frame()
 
-# combine mucosal and luminal
-combined_species <- merge(mucosa_species, content_species, 
-                          by = "Species", 
-                          all = TRUE)
-combined_species[is.na(combined_species)] <- 0
+# Format data: set row names and convert to numeric
+rownames(content_genus) <- content_genus$Phylum
+content_genus <- content_genus[, -1]
+content_genus[] <- lapply(content_genus, function(x) as.numeric(as.character(x)))
+content_genus <- content_genus[, ID, drop = FALSE]  # Keep only relevant columns
 
-# Restore species names as row names and remove the merged column
-rownames(combined_species) <- combined_species$Species
-combined_species$Species <- NULL
+#--------------------------------------#
+# Select Top 5 Phylum for Each Sample
+#--------------------------------------#
 
-# filter
-combined_species <- filter_features_by_abundance(combined_species)
-combined_species <- sweep(combined_species, 2, colSums(combined_species), FUN = "/")
+get_top_n_rows <- function(df, n_top = 5) {
+  # Ensure row names are retained by creating a Genus column
+  df$Genus <- rownames(df)
+  
+  # Extract the top n genera for each column
+  top_rows <- unique(do.call(rbind, lapply(names(df)[-ncol(df)], function(col) {
+    # Sort by descending order of the column and select top n rows
+    ordered_df <- df[order(-df[[col]]), ]
+    ordered_df[1:n_top, ]
+  })))
+  
+  # Restore row names and remove the temporary Genus column
+  rownames(top_rows) <- top_rows$Genus
+  top_rows$Genus <- NULL
+  
+  # Calculate the sum of the remaining genera for each column
+  # Exclude the Genus column when summing
+  others_sum <- colSums(df[!rownames(df) %in% rownames(top_rows), -ncol(df)])
+  others_row <- as.data.frame(t(others_sum))
+  rownames(others_row) <- "others"
+  
+  # Append the 'others' row to the top_rows data frame
+  top_rows_with_others <- rbind(top_rows, others_row)
+  
+  return(top_rows_with_others)
+}
 
+# Process mucosa data
+# Normalize values so each row sums to 1
+# Check sum to confirm normalization
+
+top_10_mucosa_genus <- get_top_n_rows(mucosa_genus, n_top = 5) %>%
+  mutate(across(everything(), ~ . / sum(., na.rm = TRUE)))
+top_10_mucosa_genus %>% summarise(across(everything(), sum, na.rm = TRUE))
+
+# Process content data
+# Normalize values so each row sums to 1
+# Check sum to confirm normalization
+
+top_10_content_genus <- get_top_n_rows(content_genus, n_top = 5) %>%
+  mutate(across(everything(), ~ . / sum(., na.rm = TRUE)))
+top_10_content_genus %>% summarise(across(everything(), sum, na.rm = TRUE))
+
+#--------------------------------------#
+# Merge Data from Both Sources
+#--------------------------------------#
+
+# Convert row names to a column for merging
+top_10_content_genus <- top_10_content_genus %>% tibble::rownames_to_column("name")
+top_10_mucosa_genus <- top_10_mucosa_genus %>% tibble::rownames_to_column("name")
+
+# Merge both datasets and replace NA with 0
+all_genera <- full_join(top_10_content_genus, top_10_mucosa_genus, by = "name")
+all_genera[is.na(all_genera)] <- 0
+
+# Restore row names and remove extra column
+rownames(all_genera) <- all_genera[, 1]
+all_genera <- all_genera[, -1]
+
+#--------------------------------------#
+# Merge sub-phylums
+#--------------------------------------#
+
+# Define the phyla you want to merge
+to_merge <- c("Bacillota", "Bacillota_A", "Bacillota_C", "Firmicutes", "Firmicutes_A", "Firmicutes_C")
+
+# Sum rows corresponding to Bacillota-related groups
+firmicutes_sum <- colSums(all_genera[rownames(all_genera) %in% to_merge, , drop = FALSE])
+
+# Remove the original rows
+all_genera <- all_genera[!rownames(all_genera) %in% to_merge, , drop = FALSE]
+
+# Add the new merged row
+all_genera["Firmicutes", ] <- firmicutes_sum
+
+#--------------------------------------#
+# Data Cleaning and Normalization
+#--------------------------------------#
+
+# Transpose for plotting
+all_genera <- as.data.frame(t(all_genera))
+
+# Remove the 'human' column if it exists
+all_genera <- all_genera %>% select(-human)
+
+# Remove low-abundance genera (max < 0.05)
+columns_to_remove <- all_genera %>%
+  summarise(across(everything(), max, na.rm = TRUE)) %>%
+  select(where(~ . < 0.05)) %>%
+  colnames()
+all_genera <- all_genera %>% select(-all_of(columns_to_remove))
+
+# Normalize each row so values sum to 1
+all_genera <- as.data.frame(t(all_genera)) %>%
+  mutate(across(everything(), ~ . / sum(., na.rm = TRUE)))
+
+# Confirm normalization
+all_genera %>% summarise(across(everything(), sum, na.rm = TRUE))
+
+# Transpose back
+all_genera <- as.data.frame(t(all_genera))
+
+# Convert row names to a column for merging
+all_genera <- all_genera %>% tibble::rownames_to_column(var = "Sample")
+
+#--------------------------------------#
+# Load Grouping Metadata
+#--------------------------------------#
 
 # Set working directory for metadata
 setwd("~/Downloads/comparison_data")
 
 # Read metadata file
 group_meta <- read.table("phylum_comp_meta.txt", header = TRUE)
-ID <- group_meta$Sample  # Extract sample IDs
-combined_species <- combined_species[, ID, drop = FALSE]  # Keep only relevant columns
 
-combined_species <- as.data.frame(t(combined_species))
-rowSums(combined_species, na.rm = TRUE) # check row sums
+# Set the factor level order of 'meta' to match its appearance in the metadata
+group_meta$meta <- factor(group_meta$meta, levels = unique(group_meta$meta))
 
-combined_species <- combined_species[order(match(rownames(combined_species), group_meta$Sample)), ]
-combined_species$group <- group_meta$host
+# Merge abundance data with metadata
+all_genera <- left_join(group_meta, all_genera, by = "Sample")
 
+# Convert to long format for ggplot
+long_all_genera <- pivot_longer(all_genera, cols = -c(Sample, meta),
+                                names_to = "Phylum", values_to = "Abundance")
 
-# Initialize a results list
-results <- data.frame(Feature = character(), p.value = numeric(), stringsAsFactors = FALSE)
-# Loop through each feature (excluding SampleID and Group)
-feature_cols <- setdiff(names(combined_species), c("group"))
-for (feature in feature_cols) {
-  kruskal_test <- kruskal.test(combined_species[[feature]] ~ combined_species$group)
-  results <- rbind(results, data.frame(Feature = feature, p.value = kruskal_test$p.value))
-}
-# Adjust p-values using the Benjamini-Hochberg method
-results$adj.p.value <- p.adjust(results$p.value, method = "BH")
-results <- results[!is.na(results$adj.p.value), ]
+# Compute mean and standard error per group
+summary_data <- long_all_genera %>%
+  group_by(meta, Phylum) %>%
+  summarise(
+    Mean_Abundance = mean(Abundance, na.rm = TRUE),
+    SE = sd(Abundance, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
 
-# Filter significant features
-significant_features <- results[results$adj.p.value < 0.01, ]
-significant_data <- combined_species %>%
-  select(significant_features$Feature)
-significant_data <- as.matrix(t(significant_data))
-colnames(significant_data) <- group_meta$meta
+# grouping
+summary_data <- summary_data %>%
+  mutate(Sample_Type = ifelse(grepl("M_", meta, ignore.case = TRUE), "Mucosal", "Luminal"))
+#--------------------------------------#
+# Generate Stacked Bar Plot with Error Bars
+#--------------------------------------#
 
-new_labels <- colnames(significant_data)
-seen <- character()
-for (i in seq_along(new_labels)) {
-  if (new_labels[i] %in% seen) {
-    new_labels[i] <- ""  # Blank out duplicates
-  } else {
-    seen <- c(seen, new_labels[i])
-  }
-}
+p <- ggplot(summary_data, aes(x = meta, y = Mean_Abundance, fill = Phylum)) +
+  geom_bar(stat = "identity", position = "stack",alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "Relative abundances of phylums in content and mucosa samples", x = "", y = "Proportion") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        strip.background = element_rect(fill = "grey90", color = "grey50"),
+        strip.text = element_text(color = "black")) +
+  facet_wrap(~ Sample_Type, scales = "free_x")
 
-# Plot heatmap with clustering
-p <- pheatmap(
-  log10(ifelse(significant_data == 0, 1e-6, significant_data)),  # Log-transformed abundance
-  color = viridis(100),
-  cluster_rows = TRUE,  # Enable row clustering
-  cluster_cols = FALSE, # Disable column clustering
-  scale = "none",       # Do not scale rows/columns
-  main = "Species Abundance Heatmap",
-  show_rownames = FALSE,
-  labels_col = new_labels,
-  angle_col = 90,
-  fontsize_col = 8,
-  border_color = NA
-)
-ggsave("./3D.png", p, width = 10, height = 5, bg = "white")
-
-
-
-# Get the order of rows after clustering
-reordered_rows <- p$tree_row$order
-
-# Get the row names in clustered order
-clustered_row_names <- rownames(significant_data)[reordered_rows]
-# Reorder significant_data using clustered_row_names
-final_export <- significant_data[clustered_row_names, ]
-
-# Convert to data frame for writing to Excel
-final_export_df <- as.data.frame(final_export)
-final_export_df$species <- rownames(final_export_df)
-
-# Write to Excel
-write_xlsx(final_export_df, path = "./differential_M_L_species.xlsx")
+ggsave("./3A.png", p, width = 11, height = 5, bg = "white")
 
