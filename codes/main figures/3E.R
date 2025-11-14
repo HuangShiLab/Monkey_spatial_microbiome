@@ -50,19 +50,29 @@ metadata <- data.frame(
 # Estimate source proportions for each sink
 FEAST_output <- FEAST(C = merged, metadata = metadata, different_sources_flag = 1,
                       dir_path ="~/Downloads/monkey_data", outfile="C_M")
+setwd("~/Downloads/monkey_data")
 output <- read.table("C_M_transmission.txt", header = TRUE, row.names = 1)
 
+# Set custom order for sub_location
+output$sub_location <- factor(output$sub_location, levels = c("Stomach", "DJ", "PJ", "IL", "CE", "PC", "DC"))
+
 # Violin plot
-plot <- ggplot(output, aes(x = "", y = transmission)) +
-  geom_violin(trim = FALSE, fill = "#b996c5") +
-  geom_boxplot(width = 0.1, fill = "black") +
-  ylim(0, 1) + labs(x = NULL, y = "Transmission proportion", title="Content to Mucosa") +
-  theme(panel.background = element_rect(fill = "white", color = NA),
-        panel.grid.major = element_blank(), 
-        panel.grid.minor = element_blank(),
-        legend.text = element_text(size = 12),
-        axis.line = element_line(size = 0.5, color = "black"))
-ggsave("plots/3E.png", plot, width = 3, height = 5)
+plot <- ggplot(output, aes(x = sub_location, y = transmission)) +
+  geom_boxplot(outlier.shape = NA, aes(fill = group)) +  # split by group
+  geom_beeswarm(alpha = 0.5, color = "black", size = 1, cex = 0.5) +
+  ylim(0, 1) +
+  labs(x = NULL, y = "Source proportion", title = "Content to Mucosa Source Tracking (FEAST)") +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    legend.text = element_text(size = 12),
+    axis.line = element_line(size = 0.5, color = "black"),
+    legend.position = "none"  # Remove if you don't want the fill legend
+  ) +
+  scale_fill_manual(values = c("#eeed89","#d66b93","#f0aa73"))
+plot
+ggsave("plots/3E.png", plot, width = 4.5, height = 5)
 
 
 # Mucosa -> Blood

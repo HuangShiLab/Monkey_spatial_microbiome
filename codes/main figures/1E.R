@@ -21,6 +21,7 @@ library(ggpubr)
 library(tibble)
 library(microbiome)
 library(patchwork)
+library(writexl)
 
 # Set working directory and read metadata
 setwd("~/Downloads/nature2023_data/")
@@ -70,14 +71,6 @@ all <- phyloseq(OTU, META)
 # Remove samples from 'kidney' location
 all <- subset_samples(all, location != "kidney")
 
-# Filter samples based on relative abundance threshold
-all <- phyloseq_filter_sample_wise_abund_trim(
-  all,
-  minabund = 0.001,
-  relabund = TRUE,
-  rm_zero_OTUs = TRUE
-)
-
 # Create a taxonomy table
 temp <- rownames(as.data.frame(all@otu_table))
 TAX <- data.frame(Species = temp)
@@ -91,50 +84,55 @@ all@tax_table <- TAX  # Assign taxonomy table to Phyloseq object
 LI <- subset_samples(all, location == "large intestine")
 SI <- subset_samples(all, location == "small intestine")
 intestine <- subset_samples(all, location == "small intestine"|location == "large intestine")
-stomach <- subset_samples(all, location == "stomach")
 oral <- subset_samples(all, location == "oral")
 upper <- subset_samples(all, location == "oral" | location == "stomach")
 
 # Function to process and analyze Phyloseq objects
 analyze_phyloseq <- function(phyloseq_obj, group_var = "species") {
-  # Filter Phyloseq object
-  filtered <- phyloseq_filter_sample_wise_abund_trim(
-    phyloseq_obj,
-    minabund = 0.001,
-    relabund = TRUE,
-    rm_zero_OTUs = TRUE
+  # 1. Pseudocount
+  mat <- as(phyloseq_obj@otu_table, "matrix")
+  counts <- round(mat * 1e6)
+  counts <- counts[rowSums(counts) > 0, , drop = FALSE]
+  storage.mode(counts) <- "integer"
+
+  
+  # 2. Run ANCOM-BC2
+  out <- ancombc2(
+    data       = counts,
+    taxa_are_rows = TRUE,
+    meta_data = as(sample_data(phyloseq_obj), "data.frame"),
+    fix_formula = group_var
   )
   
-  # Perform differential abundance analysis
- # lefse <- run_lefse(filtered, group = group_var, transform = "log10p", lda_cutoff = 3)
-  ancom <- ancom(data = filtered, tax_level = "Species", main_var = group_var)
-  
-  # Extract ANCOM effect sizes
-  beta_val <- ancom$beta_data
-  beta_pos <- apply(abs(beta_val), 2, which.max)  # Find max beta per column
-  beta_max <- vapply(seq_along(beta_pos), function(i) beta_val[beta_pos[i], i], FUN.VALUE = double(1))
-  
-  # Organize ANCOM results
-  res <- ancom$res %>%
-    mutate(beta = beta_max,
-           direct = case_when(
-             detected_0.6 == TRUE & beta > 0 ~ "Monkey",
-             detected_0.6 == TRUE & beta <= 0 ~ "Human",
-             TRUE ~ "Not Significant"
-           )) %>%
-    arrange(W) %>%
+  # 3. Extract results for the group variable
+  # (lfc, se, W, p, q, diff for the "monkey vs human" contrast)
+  res <- out$res %>%
+    select(
+      taxon,
+      lfc_speciesmonkey, se_speciesmonkey,
+      W_speciesmonkey, p_speciesmonkey, q_speciesmonkey,
+      diff_robust_speciesmonkey
+    ) %>%
+    mutate(
+      beta     = lfc_speciesmonkey,  # effect size
+      direct   = case_when(
+        diff_robust_speciesmonkey & beta > 0  ~ "Monkey",
+        diff_robust_speciesmonkey & beta <= 0 ~ "Human",
+        TRUE                           ~ "Not Significant"
+      )
+    ) %>%
     filter(direct != "Not Significant") %>%
-    select(-starts_with("detected_0."))
+    arrange(q_speciesmonkey)
   
-  # Return LEfSe and ANCOM results
-#  list(
-#    lefse = as.data.frame(lefse@marker_table),
+  # 4. Return results
+  list(
     ancom = as.data.frame(res)
-#  )
+  )
 }
 
+
 # List of Phyloseq objects for different locations
-phyloseq_objects <- list(all = all, LI = LI, SI = SI, stomach = stomach, oral = oral)
+phyloseq_objects <- list(all = all, LI = LI, SI = SI, upper = upper, oral = oral)
 
 # Apply analysis function to each Phyloseq object
 results <- lapply(phyloseq_objects, analyze_phyloseq)
@@ -164,10 +162,7 @@ for (location in names(results)) {
 ancom_combined <- do.call(rbind, ancom_results)
 
 # Write results to an Excel file
-#write.xlsx(list(
-#  Lefse = lefse_combined,
-#  Ancom = ancom_combined
-#), "microbiome_results.xlsx")
+write_xlsx(ancom_combined, path = "./microbiome_results.xlsx")
 
 ## box plot
 # upper
@@ -175,7 +170,7 @@ upper_otu <- as.data.frame(upper@otu_table)
 upper_meta <- as.data.frame(upper@sam_data)
 
 species_names <- c("Fusobacterium polymorphum",
-                   "Fusobacterium nucleatum")
+                   "Prevotella intermedia")
 
 # Convert OTU table from wide to long format
 otu_long <- upper_otu %>%
@@ -206,7 +201,7 @@ p1 <- ggplot(otu_long, aes(x = host, y = Abundance, fill = host)) +
   scale_fill_manual(values = c("#eacc76", "#a76b3e")) +
   theme_minimal() +
   labs(
-    x = "", y = "log(Relative Abundance + 1)",title = "Upper GI tract",
+    x = "", y = "log(Relative abundance + 1)",title = "Upper GI tract",
     color = "Host"
   ) +
   theme(
@@ -331,7 +326,7 @@ p3 <- ggplot(otu_long, aes(x = host, y = Abundance, fill = host)) +
     strip.placement = "outside"
   ) +
   facet_wrap(~Species, nrow = 1, strip.position = "left")+
-  coord_cartesian(ylim = c(0, 0.04))
+  coord_cartesian(ylim = c(0, 0.03))
 p3
 
 combined_plot <- p1 + p2 + p3 + plot_layout(widths = c(2,0.9,6))

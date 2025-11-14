@@ -10,6 +10,8 @@ library(readr)
 library(readxl)
 library(dplyr)
 library(ggplot2)
+library(ggbeeswarm)
+library(ggpubr)
 
 # Monkey
 # Read concentration data
@@ -18,7 +20,7 @@ concentration <- read_csv("concentration.csv")
 
 # Extract sum row and transpose
 sum_data <- concentration %>% 
-  filter(Metabolites == "sum") %>%
+  filter(Metabolites == "Sum") %>%
   select(-Metabolites, -Group) %>%
   t() %>%
   as.data.frame() %>%
@@ -41,7 +43,7 @@ p1<-ggplot(merged_data, aes(x = Location, y = Sum_Concentration, fill = Location
   scale_y_continuous(limits = c(0, 1800000)) +
   geom_beeswarm(alpha = 0.5, color = "black", size = 1, cex = 0.5) +
   labs(title = "Sum Concentration across Locations (Monkey)",
-       y = "Sum Concentration", x = "Location") +
+       y = "Sum concentration", x = "Location") +
   theme(legend.position = "none",
         panel.background = element_rect(fill = "white", color = NA),
         plot.background = element_rect(fill = "white", color = NA), 
@@ -52,7 +54,7 @@ p1<-ggplot(merged_data, aes(x = Location, y = Sum_Concentration, fill = Location
         axis.title = element_text(size = 14),
         strip.text = element_text(face = "bold")) +
   scale_fill_manual(values = ifelse(levels(merged_data$Location) %in% c("PJ", "DJ", "IL"), 
-                                    "#31688EFF", "#3E4A89FF"))
+                                    "#f0aa73", "#eeed89"))
 p1
 
 # Human
@@ -78,7 +80,7 @@ p2<-ggplot(sum_data, aes(x = Metabolites, y = Sum_Concentration, fill = Metaboli
   scale_y_continuous(limits = c(0, 6e+06)) +
   geom_beeswarm(alpha = 0.5, color = "black", size = 1, cex = 0.5) +
   labs(title = "Sum Concentration across Locations (Human)",
-       y = "Sum Concentration", x = "Location") +
+       y = "Sum concentration", x = "Location") +
   theme(legend.position = "none",
         panel.background = element_rect(fill = "white", color = NA),
         plot.background = element_rect(fill = "white", color = NA), 
@@ -89,7 +91,7 @@ p2<-ggplot(sum_data, aes(x = Metabolites, y = Sum_Concentration, fill = Metaboli
         axis.title = element_text(size = 14),
         strip.text = element_text(face = "bold")) +
   scale_fill_manual(values = ifelse(levels(sum_data$Metabolites) %in% c("PJ", "DJ", "IL"), 
-                                    "#31688EFF", "#3E4A89FF"))
+                                    "#f0aa73", "#eeed89"))
 p2
 concentration_plot <- ggarrange(p1, p2)
 ggsave("./4A.png", concentration_plot, width = 12, height = 4, bg = "white")

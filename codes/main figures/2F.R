@@ -49,16 +49,15 @@ rowSums(bc_kraken, na.rm = TRUE) # check row sums
 
 metadata <- read.table("kraken_metadata.txt",sep="\t",header=TRUE)
 
+# Remove kidney samples
+metadata <- metadata[metadata$group != "kidney", ]
 
-bc_kraken <- bc_kraken[order(match(rownames(bc_kraken), rownames(metadata))), ]
-# bc_kraken <- filter_features_by_prev(bc_kraken)
+metadata <- metadata[order(match(rownames(metadata), rownames(bc_kraken))), ]
+bc_kraken <- filter_features_by_prev(bc_kraken)
+bc_kraken <- filter_features_by_abundance(bc_kraken)
 
 # Select significant features
 bc_kraken$group <- metadata$group
-
-# Remove kidney samples
-bc_kraken <- bc_kraken[bc_kraken$group != "kidney", ]
-
 
 # Initialize a results list
 results <- data.frame(Feature = character(), p.value = numeric(), stringsAsFactors = FALSE)
@@ -85,12 +84,12 @@ p <- pheatmap(
   cluster_rows = TRUE,  # Enable row clustering
   cluster_cols = FALSE, # Disable column clustering
   scale = "none",       # Do not scale rows/columns
-  main = "Species Abundance Heatmap",
-  show_rownames = FALSE,
-  show_colnames = FALSE,
+  main = "Species Abundance Heatmap between Different Locations",
+  show_rownames = TRUE,
+  show_colnames = TRUE,
   border_color = NA
 )
-ggsave("./plots/S4.png", p, width = 10, height = 7)
+ggsave("./plots/S4.png", p, width = 13, height = 15)
 
 # Get the order of rows after clustering
 reordered_rows <- p$tree_row$order
@@ -181,7 +180,7 @@ p <- pheatmap(
   cluster_cols = FALSE, # Disable column clustering
   scale = "none",       # Do not scale rows/columns
   main = "Pathway Abundance Heatmap",
-  show_rownames = FALSE,
+#  show_rownames = FALSE,
   show_colnames = FALSE,
   border_color = NA,
   annotation_row = annotation_row,
@@ -203,10 +202,10 @@ final_export <- significant_data[clustered_row_names, ]
 final_export_df <- as.data.frame(final_export)
 final_export_df <- tibble::rownames_to_column(final_export_df, var = "Sample")
 
-colnames(df_pathways)[1] <- "pathway"
+colnames(final_export_df)[1] <- "pathway"
 
 # Join with pathway map to get level 1 and level 2 annotations
-df_annotated <- df_pathways %>%
+df_annotated <- final_export_df %>%
   left_join(MetaCyc_pathway_map, by = c("pathway" = "pathway_id"))
 
 # Write to Excel

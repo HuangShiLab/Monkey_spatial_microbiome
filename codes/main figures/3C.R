@@ -36,7 +36,7 @@ mucosa_genus <- mucosa_genus %>%
 rownames(mucosa_genus) <- mucosa_genus$Phylum
 mucosa_genus <- mucosa_genus[, -1]
 mucosa_genus[] <- lapply(mucosa_genus, function(x) as.numeric(as.character(x)))
-mucosa_genus <- mucosa_genus[, ID, drop = FALSE]  # Keep only relevant columns
+
 
 #--------------------------------------#
 # Data Import (Content)
@@ -60,7 +60,7 @@ content_genus <- content_genus %>%
 rownames(content_genus) <- content_genus$Phylum
 content_genus <- content_genus[, -1]
 content_genus[] <- lapply(content_genus, function(x) as.numeric(as.character(x)))
-content_genus <- content_genus[, ID, drop = FALSE]  # Keep only relevant columns
+
 
 #--------------------------------------#
 # Select Top 5 Phylum for Each Sample
@@ -188,7 +188,7 @@ group_meta$meta <- factor(group_meta$meta, levels = unique(group_meta$meta))
 all_genera <- left_join(group_meta, all_genera, by = "Sample")
 
 # Convert to long format for ggplot
-long_all_genera <- pivot_longer(all_genera, cols = -c(Sample, meta),
+long_all_genera <- pivot_longer(all_genera, cols = -c(Sample, meta, host),
                                 names_to = "Phylum", values_to = "Abundance")
 
 # Compute mean and standard error per group
@@ -210,7 +210,7 @@ summary_data <- summary_data %>%
 p <- ggplot(summary_data, aes(x = meta, y = Mean_Abundance, fill = Phylum)) +
   geom_bar(stat = "identity", position = "stack",alpha = 0.8) +
   theme_minimal() +
-  labs(title = "Relative abundances of phylums in content and mucosa samples", x = "", y = "Proportion") +
+  labs(title = "Phylum-level Relative Abundances in Luminal and Mucosal Samples", x = "", y = "Proportion") +
   theme(axis.text.x = element_text(angle = 90, hjust = 1),
         strip.background = element_rect(fill = "grey90", color = "grey50"),
         strip.text = element_text(color = "black")) +

@@ -45,7 +45,7 @@ df <- conc_long %>%
     by = "Sample"
   ) %>%
   mutate(
-    LocationPart = factor(LocationPart, levels = c("PJ","DJ","IL","CE","PC","DC"))
+    LocationPart = factor(LocationPart, levels = c("DJ","PJ","IL","CE","PC","DC"))
   ) %>%
   filter(!is.na(LocationPart))
 
@@ -101,11 +101,9 @@ conc_long <- concentration_data %>%
     BileAcid = Metabolite,
     Classification = Group
   ) %>%
-  filter(Site %in% c("Small Intestine 1", "SI 2",
-                     "Large Intestine 1", "LI 2", "Stool")) %>%
+  filter(Site %in% c("DJ", "PJ", "IL", "PC", "DC")) %>%
   mutate(
-    Site = factor(Site, levels = c("Small Intestine 1", "SI 2",
-                                   "Large Intestine 1", "LI 2", "Stool"))
+    Site = factor(Site, levels = c("DJ", "PJ", "IL", "PC", "DC"))
   )
 
 

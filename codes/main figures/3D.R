@@ -52,7 +52,6 @@ proc_test <- protest(mucosa_pcoa$points,
 print(proc_test)    # your Procrustes m² and p-value
 plot(proc, kind = 1)  # base R plot of matched points
 
-
 # Extract coordinates
 mucosa_coords <- as.data.frame(mucosa_pcoa$points)
 content_coords <- as.data.frame(content_pcoa$points)
@@ -80,7 +79,7 @@ df_proc <- rbind(mucosa_df, content_df)
 df_proc$ID <- sub("_[^_]+$", "", df_proc$Sample)
 
 p <- ggplot(df_proc, aes(PC1, PC2, color = Type)) +
-  geom_point(aes(shape = Type), size = 3) +
+  geom_point(aes(shape = Type), size = 4, alpha = 0.8) +
   # draw a segment _for each_ matched pair:
   geom_segment(data = df_proc %>% 
                  group_by(ID) %>% 
@@ -90,14 +89,15 @@ p <- ggplot(df_proc, aes(PC1, PC2, color = Type)) +
                            y2 = PC2[Type=="Content"]),
                aes(x = x1, y = y1, xend = x2, yend = y2),
                color = "lightgrey", alpha = 0.5) +
-  scale_color_manual(values = c("Mucosa" = "#d287ba", "Content" = "#bead3a")) +
+  scale_color_manual(values = c("Mucosa" = "#97b74e", "Content" = "#bead3a")) +
   theme(panel.background = element_rect(fill = "white", color = NA),
         plot.background = element_rect(fill = "white", color = NA), 
         panel.grid.major = element_blank(), 
         panel.grid.minor = element_blank(),
         axis.line = element_line(size = 0.5, color = "black"),
-        legend.text = element_text(size = 12)) +
-  labs(title   = "Mucosa vs Content Microbial Community",
+        legend.text = element_text(size = 12),
+        plot.caption     = element_text(size = 12)) +
+  labs(title   = "Mucosa vs Content Community Congruence (Procrustes)",
        caption = paste0("Procrustes M² = ", round(proc_test$ss, 3),
                         ", p < ", format.pval(proc_test$signif, digits = 3)))
 
